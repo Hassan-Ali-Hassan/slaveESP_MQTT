@@ -26,21 +26,29 @@ sift out any data from any topics other than that of agent#1's neighbours.
 
 #define TOPIC_SIZE 10
 #define MESSAGE_SIZE 50
+#define AGENT 2
+
 // Update these with values suitable for your network.
 
-//const char* ssid = "SU27";
-//const char* password = "opera2525";
-//const char* mqtt_server = "192.168.1.103";
+const char* ssid = "SU27";
+const char* password = "opera2525";
+const char* mqtt_server = "192.168.1.101";
 
-const char* ssid = "AeroStaff-4";
-const char* password = "stewart2";
-const char* mqtt_server = "172.28.63.46";
+//const char* ssid = "AeroStaff-4";
+//const char* password = "stewart2";
+//const char* mqtt_server = "172.28.63.46";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 long lastMsg = 0;
 char msg[MESSAGE_SIZE];
+char msgX[20];
+char msgY[20];
+int xCount = 0;
+int yCount = 0;
 int value = 0;
+float oldTime = 0;
+float t;
 boolean publishFlag = false; //this variable is defined to be used as a latch, to make sure that ESP publishes only once after detecting instructions from the master moudle. If it wasn't for it, the ESP will keep publishing an empty string.
 boolean reportFlag = false; //this variable is defined to make sure that no empty packages are sent to the master arduino (uno or mega) when a topic is updated.
 char outTopic[TOPIC_SIZE]=  "Topic";
@@ -78,6 +86,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   {
     PayLoad += char(payload[i]);
   }
+  #if AGENT == 1
   if(strcmp(topic,"Topic1") == 0) //if the incoming message belongs to this topic
   {
     outString += "$d:"+PayLoad+"#";
@@ -88,10 +97,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
     outString += "$s:"+PayLoad+"#";
     reportFlag = true;
   }
+  #elif AGENT == 2
+  if(strcmp(topic,"Topic3") == 0) //if the incoming message belongs to this topic
+  {
+    outString += "$d:"+PayLoad+"#";
+    reportFlag = true;
+  }
+  else if(strcmp(topic,"Topic4") == 0) 
+  {
+    outString += "$s:"+PayLoad+"#";
+    reportFlag = true;
+  }
+  #endif
   /****** Checking there are no incoming instructions from the master ********/
   if(Serial.available())
   {
-    parse();
+    parse2();
   }
   else //we have no incoming messages waiting in the buffer
   {
@@ -102,7 +123,107 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
   }
 }
+void parse2()
+{
+  boolean ongoingProcessFlag = false;
+  boolean endOfProcessFlag = false;
+  boolean seekTopicFlag = false;
+  boolean seekXValueFlag = false;
+  boolean seekYValueFlag = false;
+  char a = 0;
+  xCount = 0;
+  yCount = 0;
+  
+  if(Serial.available())
+  {
+    while(Serial.available())
+    {
+      a = Serial.read();
+      if(a == '(' && !ongoingProcessFlag) //if we are available and this is the mark of new message
+      {
+        ongoingProcessFlag = true;
+        seekTopicFlag = true;
+        seekXValueFlag = false;
+        seekYValueFlag = false;
+      }
+      else if(ongoingProcessFlag)
+      {
+        if(a == ':')
+        {
+          seekTopicFlag = false;
+          seekXValueFlag = true;
+          seekYValueFlag = false;
+        }
+        else if(a == ',')
+        {
+          seekXValueFlag = false;
+          seekYValueFlag = true;
+        }
+        else if(a == ')')
+        {
+          ongoingProcessFlag = false;
+          endOfProcessFlag = true;
+          PUBLISH();
+//          publishFlag = true;
+//          Serial.println("end of process");
+        }
+        else if(seekTopicFlag)
+        {
+          #if AGENT == 1
+          if(a == 'p')outTopic[5] = '3';
+          else if(a == 'b')outTopic[5] = '4';
+          #elif AGENT == 2
+          if(a == 'p')outTopic[5] = '1';
+          else if(a == 'b')outTopic[5] = '2';
+          #endif
+        }
+        else if(seekXValueFlag)
+        {
+          if(isNum(a))
+          {
+            msgX[xCount] = a;
+            xCount++;
+          }
+        }
+        else if(seekYValueFlag)
+        {
+          if(isNum(a))
+          {
+            msgY[yCount] = a;
+            yCount++;
+          }
+        }
+      }
+    }
+  }
+}
 
+void PUBLISH()
+{
+  int i = 0;
+  int j = 0;
+  for( i= 0;i < xCount; i++)
+  {
+    msg[i] = msgX[i];
+  }
+  msg[i] = ',';
+  for( j= 0; j < yCount; j++)
+  {
+    msg[j+i+1] = msgY[j]; 
+  }
+  
+  client.publish(outTopic,msg);
+  publishFlag = false;
+  for(int k = 0; k < 50; k++)
+  {
+    msg[k] = 0;
+  }
+  for(int n = 0; n < 50; n++)
+  {
+    msgX[n] = 0;
+    msgY[n] = 0;
+  }
+}
 void parse()
 {
   String m;
@@ -128,12 +249,12 @@ void parse()
       {        
         if(a == 'p') //corresponding to position information
         {
-          outTopic[5] = '3';
+          outTopic[5] = '1';
           publishFlag = true;
         }
         else if(a == 'b') // corresponding to a baton
         {
-          outTopic[5] = '4';
+          outTopic[5] = '2';
           publishFlag = true;
         }        
       }
@@ -171,16 +292,18 @@ void reconnect() {
     if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       // ... and resubscribe
-      client.subscribe("speed1");
-      client.loop();
+
+      #if AGENT == 1
       client.subscribe("Topic1");
       client.loop();
       client.subscribe("Topic2");
       client.loop();
-//      client.subscribe("Topic3");
-//      client.loop();
-//      client.subscribe("Topic4");  
-//      client.loop();    
+      #elif AGENT == 2
+      client.subscribe("Topic3");
+      client.loop();
+      client.subscribe("Topic4");  
+      client.loop();  
+      #endif  
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -193,7 +316,7 @@ void reconnect() {
 
 void setup() {
 //  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
-  Serial.begin(57600);
+  Serial.begin(115200);
   setup_wifi();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
@@ -201,19 +324,15 @@ void setup() {
 
 void loop() {
 
-  if (!client.connected()) {
+  if (!client.connected()) 
+  {
     reconnect();
   }
   client.loop();
-  parse(); //checking if the master has sent any instructions
-  if(publishFlag)
+  t = (float)(millis()/1000.0);
+  if(t-oldTime > 0.02)//if there is no delay, the loop will be way too fast and the parse() function will be invokes so quickly that the serial buffer will not be appropriately filled with he incoming message, and the while(available) will read each byte one by one (which is not desirable)
   {
-    client.publish(outTopic,msg);
-    publishFlag = false;
-    for(int i = 0; i < 50; i++)
-    {
-      msg[i] = 0;
-    }
-  }
-  delay(50);//if there is no delay, the loop will be way too fast and the parse() function will be invokes so quickly that the serial buffer will not be appropriately filled with he incoming message, and the while(available) will read each byte one by one (which is not desirable)
+    parse2();
+    oldTime = t;
+  }  
 }

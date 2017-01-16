@@ -26,32 +26,31 @@ sift out any data from any topics other than that of agent#1's neighbours.
 
 #define TOPIC_SIZE 10
 #define MESSAGE_SIZE 50
-#define AGENT 2
+#define AGENT 1
 
 // Update these with values suitable for your network.
 
-const char* ssid = "SU27";
-const char* password = "opera2525";
-const char* mqtt_server = "192.168.1.101";
+//const char* ssid = "SU27";
+//const char* password = "opera2525";
+//const char* mqtt_server = "192.168.1.101:1883";
 
-//const char* ssid = "AeroStaff-4";
-//const char* password = "stewart2";
-//const char* mqtt_server = "172.28.63.46";
+const char* ssid = "AeroStaff-4";
+const char* password = "stewart2";
+const char* mqtt_server = "172.28.63.46";
+//IPAddress mqtt_server(172,28,63,46);
 
+void callback(char* topic, byte* payload, unsigned int length);
 WiFiClient espClient;
 PubSubClient client(espClient);
+//PubSubClient client(mqtt_server, 1883, callback, espClient);
 long lastMsg = 0;
 char msg[MESSAGE_SIZE];
-char msgX[20];
-char msgY[20];
-int xCount = 0;
-int yCount = 0;
-int value = 0;
+String outString;
+int value[4] = {23,54,23,66};
 float oldTime = 0;
+float oldTime2 = 0;
 float t;
-boolean publishFlag = false; //this variable is defined to be used as a latch, to make sure that ESP publishes only once after detecting instructions from the master moudle. If it wasn't for it, the ESP will keep publishing an empty string.
-boolean reportFlag = false; //this variable is defined to make sure that no empty packages are sent to the master arduino (uno or mega) when a topic is updated.
-char outTopic[TOPIC_SIZE]=  "Topic";
+int batonValue = -1;
 
 void setup_wifi() {
 
@@ -76,211 +75,71 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  String outString = "";
-  String PayLoad = "";
-  int i = 0;
-  
-  /**** Forming the payload packet that will be sent to the master via serial ****/
-  for(i = 0; i < length; i++)
-  {
-    PayLoad += char(payload[i]);
-  }
+void callback(char* topic, byte* payload, unsigned int length) 
+{
   #if AGENT == 1
-  if(strcmp(topic,"Topic1") == 0) //if the incoming message belongs to this topic
+  if(strcmp(topic,"Topic1") == 0)
   {
-    outString += "$d:"+PayLoad+"#";
-    reportFlag = true;
-  }
-  else if(strcmp(topic,"Topic2") == 0) 
-  {
-    outString += "$s:"+PayLoad+"#";
-    reportFlag = true;
+    parseValue(payload,length,1);
+//    Serial.println(payload[0]);
   }
   #elif AGENT == 2
-  if(strcmp(topic,"Topic3") == 0) //if the incoming message belongs to this topic
+  if(strcmp(topic,"Topic2") == 0)
   {
-    outString += "$d:"+PayLoad+"#";
-    reportFlag = true;
-  }
-  else if(strcmp(topic,"Topic4") == 0) 
-  {
-    outString += "$s:"+PayLoad+"#";
-    reportFlag = true;
+    parseValue(payload,length,2);
+//    Serial.println(payload[0]);
   }
   #endif
-  /****** Checking there are no incoming instructions from the master ********/
-  if(Serial.available())
+  else if(strcmp(topic,"Topic3") == 0) //the baton 
   {
-    parse2();
-  }
-  else //we have no incoming messages waiting in the buffer
-  {
-    if(reportFlag)
-    {
-      Serial.println(outString);
-      reportFlag = false;
-    }
-  }
-}
-void parse2()
-{
-  boolean ongoingProcessFlag = false;
-  boolean endOfProcessFlag = false;
-  boolean seekTopicFlag = false;
-  boolean seekXValueFlag = false;
-  boolean seekYValueFlag = false;
-  char a = 0;
-  xCount = 0;
-  yCount = 0;
-  
-  if(Serial.available())
-  {
-    while(Serial.available())
-    {
-      a = Serial.read();
-      if(a == '(' && !ongoingProcessFlag) //if we are available and this is the mark of new message
-      {
-        ongoingProcessFlag = true;
-        seekTopicFlag = true;
-        seekXValueFlag = false;
-        seekYValueFlag = false;
-      }
-      else if(ongoingProcessFlag)
-      {
-        if(a == ':')
-        {
-          seekTopicFlag = false;
-          seekXValueFlag = true;
-          seekYValueFlag = false;
-        }
-        else if(a == ',')
-        {
-          seekXValueFlag = false;
-          seekYValueFlag = true;
-        }
-        else if(a == ')')
-        {
-          ongoingProcessFlag = false;
-          endOfProcessFlag = true;
-          PUBLISH();
-//          publishFlag = true;
-//          Serial.println("end of process");
-        }
-        else if(seekTopicFlag)
-        {
-          #if AGENT == 1
-          if(a == 'p')outTopic[5] = '3';
-          else if(a == 'b')outTopic[5] = '4';
-          #elif AGENT == 2
-          if(a == 'p')outTopic[5] = '1';
-          else if(a == 'b')outTopic[5] = '2';
-          #endif
-        }
-        else if(seekXValueFlag)
-        {
-          if(isNum(a))
-          {
-            msgX[xCount] = a;
-            xCount++;
-          }
-        }
-        else if(seekYValueFlag)
-        {
-          if(isNum(a))
-          {
-            msgY[yCount] = a;
-            yCount++;
-          }
-        }
-      }
-    }
+    parseValue(payload,length,3);
+//    Serial.println(payload[0]);
   }
 }
 
-void PUBLISH()
+void parseValue(byte* p,unsigned int L, int index)
 {
+  String xVal;
+  String yVal;
   int i = 0;
-  int j = 0;
-  for( i= 0;i < xCount; i++)
-  {
-    msg[i] = msgX[i];
-  }
-  msg[i] = ',';
-  for( j= 0; j < yCount; j++)
-  {
-    msg[j+i+1] = msgY[j]; 
-  }
+  boolean fillX = true;
+  boolean fillY = false; 
   
-  client.publish(outTopic,msg);
-  publishFlag = false;
-  for(int k = 0; k < 50; k++)
+  if(index == 3) //which means we have to update the baton value. The position values should be updated otherwise
   {
-    msg[k] = 0;
-  }
-  for(int n = 0; n < 50; n++)
-  {
-    msgX[n] = 0;
-    msgY[n] = 0;
-  }
-}
-void parse()
-{
-  String m;
-  char a = 0;
-  int i = 0;
-  boolean seekTopic = false; //this is a flag that tells if we have parsed the right letter corresponding to the topic or not. The topic to which we will publish to should be decided when reaching the : character
-  if(Serial.available())
-  {
-    while(Serial.available())
+    for(i=0; i<L; i++)
     {
-      // Here we are seeking instructions coming from the master. It takes the form of "(mode:value)", for example (p:23.5)
-      a = Serial.read();
-      if(a == '(') // which designates the start of a new message
-      {
-        m = "";
-        seekTopic = true;
-      }
-      else if(a == ':')// we should have known which topic to publish to by now
-      {
-        seekTopic = false;
-      }
-      else if(seekTopic)
-      {        
-        if(a == 'p') //corresponding to position information
-        {
-          outTopic[5] = '1';
-          publishFlag = true;
-        }
-        else if(a == 'b') // corresponding to a baton
-        {
-          outTopic[5] = '2';
-          publishFlag = true;
-        }        
-      }
-      else if(!seekTopic)
-      {
-        if(a != ')' && isNum(a)) //which means we haven't reached the end of the instruction string yet
-        {
-          msg[i] = a; //please note that the position infromation for example should be sent as an integer (position in cm for instance)
-          i++;
-        }
-      }
+      xVal += char(p[i]);
     }
+    batonValue = xVal.toInt();
+//    Serial.println(batonValue);
   }
+  else
+  {
+    for(i=0; i<L; i++)
+    {
+      if(char(p[i])==',') //this is the delimiter between x and y values
+      {
+        fillX = false;
+        fillY = true;
+      }
+      else
+      {
+        if(fillX)xVal += char(p[i]);
+        else if(fillY)yVal += char(p[i]);
+      }
+      
+//      Serial.println(char(p[i]));
+    }
+    // saving values in respective places in array
+      value[2] = xVal.toInt();
+      value[3] = yVal.toInt();
+//      Serial.print(value[2]);
+//      Serial.print("\t");
+//      Serial.println(value[3]);
+  } 
 }
 
-boolean isNum(char a)
-{
-  if(a >= 48 && a <= 57) {return true;}
-  else {return false;}
-}
-
-boolean isLetter(char a)
-{
-  if(a >= 97 && a <= 122) {return true;}
-  else {return false;}
-}
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
@@ -292,17 +151,14 @@ void reconnect() {
     if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       // ... and resubscribe
-
+      client.subscribe("Topic3");
+      client.loop();  
       #if AGENT == 1
       client.subscribe("Topic1");
-      client.loop();
-      client.subscribe("Topic2");
-      client.loop();
+      client.loop();      
       #elif AGENT == 2
-      client.subscribe("Topic3");
-      client.loop();
-      client.subscribe("Topic4");  
-      client.loop();  
+      client.subscribe("Topic2");
+      client.loop();           
       #endif  
     } else {
       Serial.print("failed, rc=");
@@ -314,8 +170,40 @@ void reconnect() {
   }
 }
 
+void checkSerial()
+{
+  String xVal;
+  String yVal;
+  String outStr;
+  boolean fillX = true;
+  boolean fillY = false; 
+  
+  char a = 0;
+  if(Serial.available())
+  {
+    while(Serial.available())
+    {
+      a = Serial.read();
+      if(a == ',')
+      {
+        fillX = false;
+        fillY = true;
+      }
+      else
+      {
+        if(fillX)xVal += a;
+        else if(fillY) yVal += a;
+      }      
+    }
+    value[0] = xVal.toInt();
+    value[1] = yVal.toInt();
+  
+    outStr = "$"+String(value[2]) + "," + String(value[3])+"#";
+    Serial.print(outStr);
+  }
+}
 void setup() {
-//  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
+  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
   Serial.begin(115200);
   setup_wifi();
   client.setServer(mqtt_server, 1883);
@@ -330,9 +218,39 @@ void loop() {
   }
   client.loop();
   t = (float)(millis()/1000.0);
-  if(t-oldTime > 0.02)//if there is no delay, the loop will be way too fast and the parse() function will be invokes so quickly that the serial buffer will not be appropriately filled with he incoming message, and the while(available) will read each byte one by one (which is not desirable)
+  if(t-oldTime > 0.01)//if there is no delay, the loop will be way too fast and the parse() function will be invokes so quickly that the serial buffer will not be appropriately filled with he incoming message, and the while(available) will read each byte one by one (which is not desirable)
   {
-    parse2();
+    checkSerial();
     oldTime = t;
   }  
+  
+  if(t-oldTime2 > 0.05)
+  {
+    #if AGENT == 1
+    if(batonValue == 0)
+    #elif AGENT == 2
+    if(batonValue == 1)
+    #endif
+    {
+      //sending a mark to the baton topic for the consequent device to send data
+      #if AGENT == 1
+      outString = String(value[0])+","+String(value[1]);
+      outString.toCharArray(msg,MESSAGE_SIZE);
+      client.publish("Topic2",msg);
+      delay(10);
+      client.publish("Topic3","1");
+      outString="";
+      batonValue = -1;
+      #elif AGENT == 2
+      outString = String(value[0]+3)+","+String(value[1]+5);
+      outString.toCharArray(msg,MESSAGE_SIZE);
+      client.publish("Topic1",msg);
+      delay(10);
+      client.publish("Topic3","0");
+      outString="";
+      batonValue = -1;
+      #endif
+    }
+    oldTime2 = t;
+  }
 }

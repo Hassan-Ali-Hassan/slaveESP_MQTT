@@ -26,7 +26,7 @@ sift out any data from any topics other than that of agent#1's neighbours.
 
 #define TOPIC_SIZE 10
 #define MESSAGE_SIZE 50
-#define AGENT 1
+#define AGENT 3
 
 // Update these with values suitable for your network.
 
@@ -43,10 +43,11 @@ void callback(char* topic, byte* payload, unsigned int length);
 WiFiClient espClient;
 PubSubClient client(espClient);
 //PubSubClient client(mqtt_server, 1883, callback, espClient);
-long lastMsg = 0;
+
 char msg[MESSAGE_SIZE];
 String outString;
-int value[4] = {23,54,23,66};
+int myValue[2] = {0,0};
+int value[6] = {23,54,23,66};
 float oldTime = 0;
 float oldTime2 = 0;
 float t;
@@ -78,34 +79,47 @@ void setup_wifi() {
 void callback(char* topic, byte* payload, unsigned int length) 
 {
   #if AGENT == 1
-  if(strcmp(topic,"Topic1") == 0)
+  if(strcmp(topic,"Topic2") == 0)
   {
     parseValue(payload,length,1);
 //    Serial.println(payload[0]);
   }
   #elif AGENT == 2
-  if(strcmp(topic,"Topic2") == 0)
+  if(strcmp(topic,"Topic1") == 0)
+  {
+    parseValue(payload,length,1);
+//    Serial.println(payload[0]);
+  }
+  else if(strcmp(topic,"Topic3") == 0)
   {
     parseValue(payload,length,2);
 //    Serial.println(payload[0]);
   }
-  #endif
-  else if(strcmp(topic,"Topic3") == 0) //the baton 
+  #elif AGENT == 3
+  if(strcmp(topic,"Topic2") == 0)
   {
-    parseValue(payload,length,3);
+    parseValue(payload,length,1);
+//    Serial.println(payload[0]);
+  }
+  #endif
+  else if(strcmp(topic,"Baton") == 0) //the baton 
+  {
+    parseValue(payload,length,9);
 //    Serial.println(payload[0]);
   }
 }
 
-void parseValue(byte* p,unsigned int L, int index)
+// this function takes the payload received by the callback function, its length and 
+// the index that indicates where it will be saved in the storage array
+void parseValue(byte* p, unsigned int L, int index)
 {
   String xVal;
   String yVal;
   int i = 0;
   boolean fillX = true;
   boolean fillY = false; 
-  
-  if(index == 3) //which means we have to update the baton value. The position values should be updated otherwise
+
+  if(index == 9) //which means we have to update the baton value. The position values should be updated otherwise
   {
     for(i=0; i<L; i++)
     {
@@ -132,8 +146,8 @@ void parseValue(byte* p,unsigned int L, int index)
 //      Serial.println(char(p[i]));
     }
     // saving values in respective places in array
-      value[2] = xVal.toInt();
-      value[3] = yVal.toInt();
+      value[2*(index-1)] = xVal.toInt();
+      value[2*(index-1)+1] = yVal.toInt();
 //      Serial.print(value[2]);
 //      Serial.print("\t");
 //      Serial.println(value[3]);
@@ -151,14 +165,19 @@ void reconnect() {
     if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       // ... and resubscribe
-      client.subscribe("Topic3");
+      client.subscribe("Baton");
       client.loop();  
       #if AGENT == 1
-      client.subscribe("Topic1");
+      client.subscribe("Topic2");
       client.loop();      
       #elif AGENT == 2
+      client.subscribe("Topic1");
+      client.loop();
+      client.subscribe("Topic3");
+      client.loop();
+      #elif AGENT == 3
       client.subscribe("Topic2");
-      client.loop();           
+      client.loop();
       #endif  
     } else {
       Serial.print("failed, rc=");
@@ -177,9 +196,16 @@ void checkSerial()
   String outStr;
   boolean fillX = true;
   boolean fillY = false; 
-  
   char a = 0;
-  if(Serial.available())
+  #if AGENT == 1
+  int numOfEntries = 1;
+  #elif AGENT == 2
+  int numOfEntries = 2;
+  #elif AGENT == 3
+  int numOfEntries = 1;
+  #endif
+  
+  if(Serial.available()) //note that every agent supplies its position only
   {
     while(Serial.available())
     {
@@ -195,11 +221,20 @@ void checkSerial()
         else if(fillY) yVal += a;
       }      
     }
-    value[0] = xVal.toInt();
-    value[1] = yVal.toInt();
-  
-    outStr = "$"+String(value[2]) + "," + String(value[3])+"#";
-    Serial.print(outStr);
+    myValue[0] = xVal.toInt();
+    myValue[1] = yVal.toInt();
+
+    outStr = "$";
+    for(int i = 1; i <= numOfEntries; i++)
+    {
+      outStr = outStr + String(value[2*(i-1)]) + "," + String(value[2*(i-1)+1]);
+      if(numOfEntries > 1)
+      {
+        outStr = outStr + ",";
+      }
+    }
+    outStr = outStr +"#";
+    Serial.print(outStr);//sending to the master
   }
 }
 void setup() {
@@ -226,27 +261,36 @@ void loop() {
   
   if(t-oldTime2 > 0.05)
   {
-    #if AGENT == 1
-    if(batonValue == 0)
+    #if AGENT == 1 //this is intended to mean: 2 will send after 1 has sent, 3 will send after 2 has sent and 1 will send after 3 has sent
+    if(batonValue == 3)
     #elif AGENT == 2
     if(batonValue == 1)
+    #elif AGENT == 3
+    if(batonValue == 2)
     #endif
     {
-      //sending a mark to the baton topic for the consequent device to send data
       #if AGENT == 1
-      outString = String(value[0])+","+String(value[1]);
-      outString.toCharArray(msg,MESSAGE_SIZE);
-      client.publish("Topic2",msg);
-      delay(10);
-      client.publish("Topic3","1");
-      outString="";
-      batonValue = -1;
-      #elif AGENT == 2
-      outString = String(value[0]+3)+","+String(value[1]+5);
+      outString = String(myValue[0])+","+String(myValue[1]);
       outString.toCharArray(msg,MESSAGE_SIZE);
       client.publish("Topic1",msg);
       delay(10);
-      client.publish("Topic3","0");
+      client.publish("Baton","1");//sending a mark to the baton topic for the consequent device to send data
+      outString="";
+      batonValue = -1;
+      #elif AGENT == 2
+      outString = String(myValue[0])+","+String(myValue[1]);
+      outString.toCharArray(msg,MESSAGE_SIZE);
+      client.publish("Topic2",msg);
+      delay(10);
+      client.publish("Baton","2");
+      outString="";
+      batonValue = -1;
+      #elif AGENT == 3
+      outString = String(myValue[0])+","+String(myValue[1]);
+      outString.toCharArray(msg,MESSAGE_SIZE);
+      client.publish("Topic3",msg);
+      delay(10);
+      client.publish("Baton","3");
       outString="";
       batonValue = -1;
       #endif
